@@ -1,0 +1,61 @@
+name: "PoC Demo - Attacker Code Execution via pull_request_target"
+# This workflow demonstrates the attack that would occur in the REAL vulnerable workflow
+# when a maintainer applies the 'Manually Reviewed' label to a fork PR.
+#
+# In the real scenario (aws-samples/amazon-s3-object-lambda-default-configuration):
+#   1. Attacker forks the repo and adds malicious preinstall to package.json
+#   2. Attacker opens a PR
+#   3. Maintainer applies 'Manually Reviewed' label
+#   4. run_integration_tests.yaml fires:
+#      - Checks out ATTACKER'S code (ref: PR head SHA, repo: attacker's fork)
+#      - Configures AWS credentials (ROLE_ARN from secrets)
+#      - Runs npm install -> executes preinstall script WITH AWS creds in env
+#
+# This demo reproduces the exact code execution, using the attacker branch code.
+
+on:
+  workflow_dispatch:
+    inputs:
+      attacker_sha:
+        description: "Attacker commit SHA to checkout (from poc-attacker-preinstall branch)"
+        required: false
+        default: "poc-attacker-preinstall"
+
+jobs:
+  demonstrate-attack:
+    runs-on: ubuntu-latest
+    # Equivalent condition: 'Manually Reviewed' label was just applied
+    steps:
+      - name: "[REAL WORKFLOW STEP 1] Check out ATTACKER'S code"
+        uses: actions/checkout@v2
+        with:
+          # In the real attack: ref=${{ github.event.pull_request.head.sha }}
+          # Here we check out the attacker branch to simulate the same thing
+          ref: poc-attacker-preinstall
+          repository: hollandd2023/amazon-s3-object-lambda-default-configuration
+
+      - name: "Show what code was checked out (attacker controls this)"
+        run: |
+          echo "=== Checked out commit ==="
+          git log -1 --oneline
+          echo "=== Attacker's package.json ==="
+          cat function/nodejs_20_x/package.json
+
+      - name: "[REAL WORKFLOW STEP 2] Configure AWS Credentials (simulated)"
+        run: |
+          echo "In real attack: aws-actions/configure-aws-credentials sets:"
+          echo "  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN"
+          echo "  AWS_DEFAULT_REGION=${{ secrets.AWS_REGION }}"
+          echo "  AWS_ROLE_ARN=${{ secrets.AWS_ASSUME_ROLE }}"
+          echo "These are available as env vars during npm install."
+          export SIMULATED_AWS_ROLE_ARN="arn:aws:iam::REDACTED:role/GithubActionIntegrationTest"
+          export SIMULATED_AWS_REGION="us-east-1"
+          echo "SIMULATED_AWS_ROLE_ARN=$SIMULATED_AWS_ROLE_ARN" >> $GITHUB_ENV
+          echo "SIMULATED_AWS_REGION=$SIMULATED_AWS_REGION" >> $GITHUB_ENV
+
+      - name: "[REAL WORKFLOW STEP 3] npm install - EXECUTES ATTACKER preinstall script"
+        working-directory: function/nodejs_20_x
+        run: |
+          echo "=== Running npm install (this triggers preinstall from ATTACKER's package.json) ==="
+          npm install
+          echo "=== npm install completed ==="
